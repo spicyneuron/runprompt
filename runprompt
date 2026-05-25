@@ -223,23 +223,60 @@ def main():
 
     raw_stdin = read_stdin()
 
+    # Determine if we have a prompt_path
+    prompt_path = None
+    if args.remaining:
+        first_pos = args.remaining[0]
+        if args.prompt:
+            try:
+                pos_idx = sys.argv.index(first_pos)
+            except ValueError:
+                pos_idx = -1
+
+            prompt_idx = -1
+            for idx, arg in enumerate(sys.argv):
+                if arg in ("-p", "--prompt") or arg.startswith("-p=") or arg.startswith("--prompt="):
+                    prompt_idx = idx
+                    break
+
+            if pos_idx != -1 and prompt_idx != -1 and pos_idx < prompt_idx:
+                if os.path.isfile(first_pos):
+                    prompt_path = first_pos
+                    log("Detected prompt file before prompt flag: %s" % prompt_path)
+        else:
+            prompt_path = first_pos
+
+    # Parse prompt file if present
+    file_meta = {}
+    file_template = ""
+    if prompt_path:
+        file_meta, file_template = parse_prompt_file(prompt_path)
+        extra_args = args.remaining[1:] if len(args.remaining) > 1 else []
+        log("Parsed prompt file: %s" % prompt_path)
+    else:
+        extra_args = args.remaining
+
+    # Parse inline prompt if present
+    inline_meta = {}
+    inline_template = ""
     if args.prompt:
-        prompt_path = None
         if args.prompt == "-":
-            template = raw_stdin or ""
+            raw_prompt = raw_stdin or ""
             raw_stdin = None  # Consumed as the template, so it's no longer available for {{STDIN}}
         else:
-            template = args.prompt
-        meta = {}
-        extra_args = args.remaining
+            raw_prompt = args.prompt
+        inline_meta, inline_template = parse_prompt_content(raw_prompt)
+        log("Parsed inline prompt")
+
+    # Merge metadata and templates
+    meta = {}
+    meta.update(file_meta)
+    meta.update(inline_meta)
+
+    if args.prompt:
+        template = inline_template
     else:
-        prompt_path = args.remaining[0] if args.remaining else None
-        if prompt_path:
-            meta, template = parse_prompt_file(prompt_path)
-            extra_args = args.remaining[1:] if len(args.remaining) > 1 else []
-        else:
-            meta, template = {}, ""
-            extra_args = []
+        template = file_template
 
     meta = apply_overrides(meta)
     # Apply model from config cascade if not in frontmatter
@@ -694,9 +731,7 @@ def read_stdin():
 # === PROMPT FILE HANDLING ===
 
 
-def parse_prompt_file(path):
-    with open(path, "r") as f:
-        content = f.read()
+def parse_prompt_content(content):
     # Skip shebang line if present
     if content.startswith("#!"):
         content = content.split("\n", 1)[1] if "\n" in content else ""
@@ -718,6 +753,12 @@ def parse_prompt_file(path):
         return meta, template
     # No frontmatter delimiter found
     return {}, content.strip()
+
+
+def parse_prompt_file(path):
+    with open(path, "r") as f:
+        content = f.read()
+    return parse_prompt_content(content)
 
 
 def _parse_yaml_minimal(s):
